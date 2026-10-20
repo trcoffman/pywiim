@@ -7,6 +7,7 @@ import contextlib
 import ipaddress
 import re
 import socket
+import sys
 import uuid
 from typing import Any
 from xml.etree import ElementTree
@@ -93,13 +94,30 @@ class DeviceServer:
         await self._runner.setup()
         try:
             site = web.TCPSite(self._runner, self.address, self.port)
-            await site.start()
+            try:
+                await site.start()
+            except OSError as exc:
+                raise OSError(
+                    exc.errno,
+                    f"HTTP listener at {self.address}:{self.port} could not start: {exc.strerror or exc}. "
+                    "Choose another port with --http-port.",
+                ) from exc
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             try:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if sys.platform == "darwin":
+                    # macOS requires this as well to share a multicast port.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(self.address))
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-                sock.bind(("", _SSDP[1]))
+                try:
+                    sock.bind(("", _SSDP[1]))
+                except OSError as exc:
+                    raise OSError(
+                        exc.errno,
+                        f"SSDP discovery listener on UDP port {_SSDP[1]} could not bind: {exc.strerror or exc}. "
+                        "Quit the conflicting discovery app, or supply a speaker IP with --no-discovery.",
+                    ) from exc
                 membership = socket.inet_aton(_SSDP[0]) + socket.inet_aton(self.address)
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
                 sock.setblocking(False)

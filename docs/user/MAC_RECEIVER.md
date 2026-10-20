@@ -54,6 +54,16 @@ Change it with `--http-port`. `--interface` selects the Mac's advertised LAN
 IPv4 address. `--no-discovery` disables these listeners while retaining direct
 group membership and group control over the WMRM connection.
 
+If startup reports an HTTP address already in use, choose a different port with
+`--http-port 8088`. Discovery also listens on UDP port **1900**; changing the
+HTTP port does not change that port. On macOS, the receiver enables multicast
+port sharing with other apps that permit sharing. If another app reserves the
+discovery port exclusively, quit that app or join directly without discovery:
+
+```sh
+uv run wiim-receiver SPEAKER_IP --name 'My Mac' --no-discovery
+```
+
 Direct CLI grouping is the verified path. Initial pairing from the WiiM Home
 app has not been validated; an app that insists on HTTP port 80 or HTTPS port
 443 may not discover/control the virtual device through its advertised port.

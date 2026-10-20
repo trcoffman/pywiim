@@ -1,5 +1,9 @@
 """Exercise the HTTP commands and discovery response without a physical speaker."""
 
+import asyncio
+import errno
+import socket
+import sys
 from unittest.mock import MagicMock
 from xml.etree import ElementTree
 
@@ -95,3 +99,53 @@ def test_ssdp_media_renderer_search_and_no_response_to_other_targets():
     discovery.transport.reset_mock()
     discovery.datagram_received(b"M-SEARCH * HTTP/1.1\r\nST: unrelated\r\n\r\n", ("192.168.1.3", 1234))
     discovery.transport.sendto.assert_not_called()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS multicast port sharing")
+async def test_discovery_receives_searches_when_another_app_shares_its_port(monkeypatch):
+    group = "239.255.255.250"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as other_app:
+        other_app.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        other_app.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        other_app.bind(("", 0))
+        address = (group, other_app.getsockname()[1])
+        membership = socket.inet_aton(group) + socket.inet_aton("127.0.0.1")
+        other_app.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+        monkeypatch.setattr("pywiim.receiver.server._SSDP", address)
+        server = DeviceServer(make_receiver(), "127.0.0.1", 0)
+        try:
+            await server.start()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as search:
+                search.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton("127.0.0.1"))
+                search.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+                search.bind(("127.0.0.1", 0))
+                search.setblocking(False)
+                loop = asyncio.get_running_loop()
+                await loop.sock_sendto(
+                    search,
+                    b'M-SEARCH * HTTP/1.1\r\nMAN: "ssdp:discover"\r\n'
+                    b"ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n",
+                    address,
+                )
+                packet, _ = await asyncio.wait_for(loop.sock_recvfrom(search, 8192), 3)
+                assert packet.startswith(b"HTTP/1.1 200 OK\r\n")
+                assert server.udn.encode() in packet
+        finally:
+            await server.close()
+
+
+@pytest.mark.parametrize("listener", ["HTTP", "SSDP"])
+async def test_occupied_port_identifies_listener_and_cleans_up(monkeypatch, listener):
+    kind = socket.SOCK_STREAM if listener == "HTTP" else socket.SOCK_DGRAM
+    with socket.socket(socket.AF_INET, kind) as blocker:
+        blocker.bind(("127.0.0.1" if listener == "HTTP" else "", 0))
+        port = blocker.getsockname()[1]
+        if listener == "HTTP":
+            blocker.listen()
+        else:
+            monkeypatch.setattr("pywiim.receiver.server._SSDP", ("239.255.255.250", port))
+        server = DeviceServer(make_receiver(), "127.0.0.1", port if listener == "HTTP" else 0)
+        with pytest.raises(OSError, match=f"{listener}.*{port}") as error:
+            await server.start()
+        assert error.value.errno == errno.EADDRINUSE
+        assert server._runner is None
