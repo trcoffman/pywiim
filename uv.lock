@@ -2068,9 +2068,15 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "async-upnp-client" },
+    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "m3u8" },
     { name = "mutagen" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pycryptodome" },
     { name = "pydantic" },
+    { name = "sounddevice" },
 ]
 
 [package.optional-dependencies]
@@ -2088,28 +2094,20 @@ dev = [
 mcp = [
     { name = "mcp", extra = ["cli"] },
 ]
-receiver = [
-    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pycryptodome" },
-    { name = "sounddevice" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "async-upnp-client", specifier = ">=0.40.0" },
-    { name = "av", marker = "extra == 'receiver'", specifier = ">=14.0.0" },
+    { name = "av", specifier = ">=14.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "m3u8", specifier = ">=3.5.0" },
     { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "numpy", marker = "extra == 'receiver'", specifier = ">=1.26.0" },
-    { name = "pycryptodome", marker = "extra == 'receiver'", specifier = ">=3.20.0" },
+    { name = "numpy", specifier = ">=1.26.0" },
+    { name = "pycryptodome", specifier = ">=3.20.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
@@ -2117,9 +2115,9 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "sounddevice", marker = "extra == 'receiver'", specifier = ">=0.5.0" },
+    { name = "sounddevice", specifier = ">=0.5.0" },
 ]
-provides-extras = ["receiver", "mcp", "dev"]
+provides-extras = ["mcp", "dev"]
 
 [[package]]
 name = "pywin32"

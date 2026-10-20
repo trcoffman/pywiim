@@ -149,7 +149,7 @@ async def _run(args: argparse.Namespace, screen: Any = None) -> None:
 
 
 def cli_main() -> None:
-    """Console entry point with optional dependencies and readable startup errors."""
+    """Console entry point with readable startup errors."""
     parser = _parser()
     args = parser.parse_args()
     if not args.name or len(args.name.encode()) > 63 or not args.name.isprintable():
@@ -173,7 +173,7 @@ def cli_main() -> None:
 
         from pywiim.receiver.client import Receiver  # noqa: F401
     except ImportError:
-        parser.error('Receiver dependencies are missing. Install with: pip install -e ".[receiver]"')
+        parser.error("Receiver dependencies are missing. Install with: pip install -e .")
     if args.list_outputs:
         for index, device in enumerate(sd.query_devices()):
             if device["max_output_channels"]:

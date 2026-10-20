@@ -13,10 +13,10 @@ for repository operations; both `.jj` and `.git` are present.
   "python_requires": ">=3.11",
   "local_test_python": "3.13.3",
   "environment": ".venv",
-  "install": "uv pip install --python .venv/bin/python -e '.[dev,receiver]'",
+  "install": "uv pip install --python .venv/bin/python -e '.[dev]'",
   "test": ".venv/bin/pytest tests/unit",
-  "receiver": ".venv/bin/wiim-receiver SPEAKER_IP",
+  "receiver": "uv run wiim-receiver SPEAKER_IP",
   "quality": ["black", "isort", "ruff", "mypy"],
-  "receiver_notes": "Optional WMRM 4.3 macOS group follower; see docs/user/MAC_RECEIVER.md"
+  "receiver_notes": "WMRM 4.3 macOS group follower with dependencies installed by default; see docs/user/MAC_RECEIVER.md"
 }
 ```

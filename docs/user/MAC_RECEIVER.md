@@ -9,11 +9,12 @@ the group's audio with its own name and persistent speaker ID.
 From this checkout:
 
 ```sh
-uv venv .venv --python 3.13
-uv pip install --python .venv/bin/python -e '.[receiver]'
-.venv/bin/wiim-receiver --list-outputs
-.venv/bin/wiim-receiver SPEAKER_IP --name 'My Mac'
+uv run wiim-receiver --list-outputs
+uv run wiim-receiver SPEAKER_IP --name 'My Mac'
 ```
+
+Receiver dependencies are installed automatically; no extra is needed.
+You can also install with `pip install -e .` and run `wiim-receiver` directly.
 
 Pass the IP of either the leader or an existing follower. The receiver resolves
 a follower's `master_ip` automatically. Select the existing WiiM group in
@@ -23,7 +24,7 @@ are needed on the Mac.
 The default output is the Mac's current system output. To choose another:
 
 ```sh
-.venv/bin/wiim-receiver SPEAKER_IP --name 'My Mac' --output 'MacBook Pro Speakers'
+uv run wiim-receiver SPEAKER_IP --name 'My Mac' --output 'MacBook Pro Speakers'
 ```
 
 The terminal shows group membership, track information, local volume, clock
@@ -80,7 +81,7 @@ clock validation, presentation timestamps, callback scheduling, volume/mute,
 source gating, HTTP control, and SSDP responses:
 
 ```sh
-uv pip install --python .venv/bin/python -e '.[dev,receiver]'
+uv pip install --python .venv/bin/python -e '.[dev]'
 .venv/bin/pytest tests/unit/receiver -q
 ```
 

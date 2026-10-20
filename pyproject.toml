@@ -30,6 +30,10 @@ dependencies = [
     "async-upnp-client>=0.40.0",
     "m3u8>=3.5.0",
     "mutagen>=1.47.0",
+    "av>=14.0.0",
+    "numpy>=1.26.0",
+    "pycryptodome>=3.20.0",
+    "sounddevice>=0.5.0",
 ]
 
 [project.urls]
@@ -38,12 +42,6 @@ Repository = "https://github.com/mjcumming/pywiim"
 Issues = "https://github.com/mjcumming/pywiim/issues"
 
 [project.optional-dependencies]
-receiver = [
-    "av>=14.0.0",
-    "numpy>=1.26.0",
-    "pycryptodome>=3.20.0",
-    "sounddevice>=0.5.0",
-]
 mcp = [
     "mcp[cli]>=1.0.0",
 ]

@@ -87,7 +87,7 @@ outside the output callback. `--latency-ms` applies an explicit hardware trim.
 
 The implementation reuses the controller only to resolve an initial follower's
 leader. It does not modify `Player`, its role caches, or any existing controller
-API. Optional dependencies live in the `receiver` extra. Only WMRM 4.3 and
+API. Audio and wire-codec dependencies are installed by default. Only WMRM 4.3 and
 AAC mode 10 have been tested on current hardware. Capability flags, fixed ports,
 other codecs, and future firmware may require further interoperability work.
 
