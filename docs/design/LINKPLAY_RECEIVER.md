@@ -83,6 +83,35 @@ fractional sample offsets to compensate drift. Past audio is discarded, missing
 audio becomes silence, and the decoded queue is bounded. AAC decoding stays
 outside the output callback. `--latency-ms` applies an explicit hardware trim.
 
+### Native Rust playback
+
+The Rust receiver under `rust/receiver` shares the observed wire protocol and
+speaker identity derivation with the Python reference. Symphonia decodes ADTS
+AAC on a dedicated thread. A preallocated SPSC ring stores fixed-size PCM
+frames with leader timestamps, source positions, and reset generations. The
+CPAL output callback owns its queue consumer and uses atomics for controls and
+diagnostic counters; it performs no allocation, locking, decoding, or logging.
+
+Playback uses CPAL's predicted DAC timestamps, calibrated to the receiver's
+monotonic epoch. The callback interpolates across packet boundaries at the
+output device's native sample rate, slews clock offset changes at up to 200 ppm,
+and applies short gain ramps. Seek, stop, source change, and reconnect increment
+a generation so old frames are discarded. The queue and per-callback discard
+work are bounded, and decoder backpressure occurs on the worker thread.
+Missing audio and late frames are counted separately from backend errors.
+
+Live tracing also found header timestamp-reference changes of hundreds of
+microseconds between consecutive AAC packets. Applying every reference directly
+to its packet creates small PCM gaps or overlaps even with a full queue. A source
+timeline now schedules consecutive samples continuously and absorbs small
+reference corrections through a bounded rate adjustment. Missing source positions,
+format changes, and timestamp jumps of 50 ms or more establish a new timeline.
+
+The Rust implementation is standalone; the Python controller APIs and Python
+receiver remain available for comparison. Both derive the same default UUID
+from the hostname, so running both simultaneously requires distinct `--uuid`
+values. Each process still needs a distinct HTTP port if discovery is enabled.
+
 ## Deliberate compatibility boundaries
 
 The implementation reuses the controller only to resolve an initial follower's

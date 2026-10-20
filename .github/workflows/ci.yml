@@ -7,6 +7,20 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  rust-receiver:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - name: Check Rust formatting
+      run: cargo fmt --all -- --check
+    - name: Lint native receiver
+      run: cargo clippy --all-targets --locked -- -D warnings
+    - name: Test native receiver
+      run: cargo test --locked
+
   test:
     runs-on: ubuntu-latest
     strategy:

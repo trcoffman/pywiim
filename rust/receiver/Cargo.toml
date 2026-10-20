@@ -1,0 +1,28 @@
+[package]
+name = "wiim-receiver"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Native WiiM WMRM 4.3 Spotify group receiver"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+cpal = "0.16"
+crossterm = "0.28"
+des = "0.8"
+hex = "0.4"
+hostname = "0.4"
+quick-xml = { version = "0.38", features = ["serialize"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rtrb = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+socket2 = { version = "0.6", features = ["all"] }
+symphonia = { version = "0.5", default-features = false, features = ["aac"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "signal", "sync"] }
+tokio-util = "0.7"
+uuid = { version = "1", features = ["v5"] }
+

@@ -10,10 +10,10 @@ Python library for WiiM and LinkPlay device control with command-line tools for 
 
 `pywiim` provides control of WiiM and LinkPlay-based audio devices through a Python API and command-line tools. The library handles playback control, volume management, queues, multiroom audio, EQ settings, presets, and more.
 
-An experimental **Mac Spotify group receiver** can also join an existing WiiM
-group as a separate speaker. From this checkout, run
-`uv run wiim-receiver SPEAKER_IP --name 'My Mac'`. Receiver dependencies are
-included in the default install. See the
+An experimental **Mac Spotify group receiver**, implemented in Rust, can join
+an existing WiiM group as a separate speaker. From this checkout, run
+`cargo run --release -- SPEAKER_IP --name 'My Mac'`. It uses native audio output
+and requires no Python or FFmpeg at runtime. See the
 [Mac receiver guide](docs/user/MAC_RECEIVER.md) for setup, controls, and compatibility limits.
 
 ## Key Features
