@@ -26,3 +26,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-uti
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v5"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = "0.4"
+

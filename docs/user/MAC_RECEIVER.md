@@ -67,6 +67,10 @@ For timing adjustment, `--latency-ms 25` delays the Mac by 25 ms;
 `--latency-ms -25` advances it. This trims output-device latency in addition to
 the group clock synchronization. Acoustic alignment across different DACs and
 headphones still needs a listening check.
+The native receiver uses the frame's existing playback timestamp; the advertised
+800 ms group lead time is not added a second time. CoreAudio host timestamps are
+calibrated independently of callback arrival time. Any remaining output-device
+or external display/audio processing delay can be adjusted with `--latency-ms`.
 
 Headless runs can use `--no-tui`; `--duration 30` leaves after 30 seconds.
 Use `--verbose --no-tui` for diagnostic logs.

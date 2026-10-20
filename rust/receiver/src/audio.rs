@@ -2,6 +2,7 @@
 //! Decoding, allocation, device creation, networking, and logging stay off it.
 use crate::{
     client::ClockData,
+    output_clock::OutputClock,
     protocol::{adts_frames, AudioPacket},
     Args,
 };
@@ -389,18 +390,18 @@ fn build_stream<T: SizedSample + FromSample<f32>>(
     clock: Arc<ClockData>,
 ) -> Result<cpal::Stream> {
     let errors = controls.clone();
-    let mut origin: Option<(cpal::StreamInstant, u64)> = None;
+    #[cfg(target_os = "macos")]
+    let mut output_clock = Some(OutputClock::calibrate(&clock)?);
+    #[cfg(not(target_os = "macos"))]
+    let mut output_clock: Option<OutputClock> = None;
     Ok(device.build_output_stream(
         config,
         move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
             let stamp = info.timestamp();
-            let (base, local) = *origin.get_or_insert_with(|| (stamp.callback, clock.now()));
-            let dac = stamp
-                .playback
-                .duration_since(&base)
-                .map(|delta| local.saturating_add(delta.as_nanos() as u64))
-                .unwrap_or(local);
-            renderer.render(out, dac.min(i64::MAX as u64) as i64, &controls, &clock);
+            let mapping = output_clock
+                .get_or_insert_with(|| OutputClock::new(stamp.callback, clock.now() as i64));
+            let dac = mapping.local_ns(stamp.playback);
+            renderer.render(out, dac, &controls, &clock);
         },
         move |_error| {
             errors.device_errors.fetch_add(1, Ordering::Relaxed);

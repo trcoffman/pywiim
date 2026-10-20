@@ -90,12 +90,14 @@ pub struct AudioPacket {
     pub payload: Vec<u8>,
 }
 impl AudioPacket {
-    pub fn presentation_ns(&self, leadtime: u32) -> Result<i64> {
+    pub fn presentation_ns(&self) -> Result<i64> {
         ensure!(self.rate != 0, "zero audio sample rate");
         let delta = (i128::from(self.position) - i128::from(self.reference_position))
             * 1_000_000_000
             / i128::from(self.rate);
-        (i128::from(self.reference_ns) + delta + i128::from(leadtime) * 1_000_000)
+        // This reference is already on the leader's playback timeline. The
+        // advertised group leadtime must not be added to it a second time.
+        (i128::from(self.reference_ns) + delta)
             .try_into()
             .context("presentation time overflow")
     }
@@ -227,6 +229,25 @@ pub fn adts_frames(payload: &[u8]) -> Result<Vec<(&[u8], [u8; 2])>> {
 mod tests {
     use super::*;
     #[test]
+    fn captured_audio_reference_matches_leader_render_clock_without_extra_leadtime() {
+        // Header and heartbeat from the same WMRM 4.3 capture. The leader
+        // advertised leadtime=800, but its render clock already matches the
+        // frame reference to within 0.3 ms. Adding 800 ms double-counts it.
+        let packet = AudioPacket {
+            rate: 44100,
+            position: 25307136,
+            reference_position: 25160704,
+            reference_ns: 263495342228364,
+            payload: vec![],
+        };
+        let render_position = 25336832u64;
+        let render_ns = 263499335809825i64;
+        let predicted = packet.presentation_ns().unwrap()
+            + ((render_position - packet.position) * 1_000_000_000 / u64::from(packet.rate)) as i64;
+        assert!((predicted - render_ns).abs() < 1_000_000);
+        assert!((predicted + 800_000_000 - render_ns).abs() > 799_000_000);
+    }
+    #[test]
     fn audio_fragmentation_preserves_payload_and_presentation_time() {
         let payload = b"synthetic AAC framing fixture";
         let mut wire = vec![0; AUDIO_HEADER_SIZE];
@@ -248,8 +269,8 @@ mod tests {
             assert_eq!(packets[0].payload, payload);
             assert_eq!(packets[0].rate, 44100);
             assert_eq!(
-                packets[0].presentation_ns(800).unwrap(),
-                10_800_000_000 - 1024 * 1_000_000_000 / 44100
+                packets[0].presentation_ns().unwrap(),
+                10_000_000_000 - 1024 * 1_000_000_000 / 44100
             );
         }
         wire[0] = 0;

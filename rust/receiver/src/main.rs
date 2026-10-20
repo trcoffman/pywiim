@@ -1,5 +1,6 @@
 mod audio;
 mod client;
+mod output_clock;
 mod protocol;
 mod server;
 

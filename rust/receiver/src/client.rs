@@ -630,8 +630,7 @@ async fn receive_audio(
             if !shared.audio.enabled.load(Ordering::Acquire) {
                 continue;
             }
-            let lead = shared.state.lock().unwrap().leadtime;
-            let presentation = packet.presentation_ns(lead)?;
+            let presentation = packet.presentation_ns()?;
             let frame = EncodedAudio::Data {
                 packet,
                 presentation,

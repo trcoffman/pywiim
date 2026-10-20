@@ -73,8 +73,11 @@ The observed header is 56 bytes, described by `<IHHIIQQQIIQ>`:
 AAC payloads include ADTS headers and are decoded independently of Spotify.
 Only the fields verified by the receiver are interpreted. The leader also
 sends `playback_sync` with status, sample position, host time, and `leadtime` in
-milliseconds. The observed lead time was 800 ms. A packet's presentation time
-is its clock reference plus the sample-position delta and that lead time.
+milliseconds. The observed lead time was 800 ms. The native receiver maps each
+packet to its clock reference plus the sample-position delta. The reference
+already includes the group playback timing; adding `leadtime` again makes the
+Mac about 800 ms late. In the capture, this mapping agrees with the leader's
+`render_pts`/`render_time` heartbeat to within 0.3 ms without an additional delay.
 
 The receiver maps that timestamp to the local monotonic clock. PortAudio's DAC
 clock is separately calibrated against the same local clock. The output callback
@@ -93,7 +96,9 @@ CPAL output callback owns its queue consumer and uses atomics for controls and
 diagnostic counters; it performs no allocation, locking, decoding, or logging.
 
 Playback uses CPAL's predicted DAC timestamps, calibrated to the receiver's
-monotonic epoch. The callback interpolates across packet boundaries at the
+monotonic epoch by bracketing reads of `mach_absolute_time()` using the same
+timebase as CoreAudio. Callback invocation time is not used as the origin of a
+scheduled audio timestamp. The callback interpolates across packet boundaries at the
 output device's native sample rate, slews clock offset changes at up to 200 ppm,
 and applies short gain ramps. Seek, stop, source change, and reconnect increment
 a generation so old frames are discarded. The queue and per-callback discard

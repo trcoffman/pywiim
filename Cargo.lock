@@ -2076,6 +2076,7 @@ dependencies = [
  "des",
  "hex",
  "hostname",
+ "mach2",
  "quick-xml",
  "reqwest",
  "rtrb",
