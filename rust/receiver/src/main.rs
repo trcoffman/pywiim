@@ -27,7 +27,7 @@ pub struct Args {
     /// Stable 24-character hexadecimal speaker identity
     #[arg(long)]
     uuid: Option<String>,
-    /// Audio output name or index; defaults to the OS default device
+    /// Pin an output name or index; otherwise follow changes to the OS default
     #[arg(long)]
     output: Option<String>,
     #[arg(long)]
@@ -84,14 +84,16 @@ async fn display(shared: Shared, args: &Args) -> Result<()> {
         }
         let state = shared.state.lock().unwrap().clone();
         let stats = shared.audio.snapshot();
+        let output_name = shared.audio.output_name.lock().unwrap().clone();
         let message = format!(
-            "{}: {} · {} — {} · volume {}%{}",
+            "{}: {} · {} — {} · volume {}%{} · output {}",
             state.name,
             state.message,
             state.artist,
             state.title,
             state.volume,
-            if state.muted { " (muted)" } else { "" }
+            if state.muted { " (muted)" } else { "" },
+            output_name
         );
         if tui {
             let lines = [
@@ -100,7 +102,7 @@ async fn display(shared: Shared, args: &Args) -> Result<()> {
                 state.message.clone(),
                 format!("Group: {}", state.master_name),
                 format!("Track: {} — {}", state.artist, state.title),
-                format!("Output: {}", shared.output_name),
+                format!("Output: {}", output_name),
                 format!(
                     "Volume: {}%{}",
                     state.volume,
@@ -218,10 +220,6 @@ async fn main() -> Result<()> {
     let shared = Shared::new(name, uuid.to_uppercase(), args.volume, leader);
     let mut audio =
         audio::AudioWorker::start(&args, shared.audio.clone(), shared.clock.clone()).await?;
-    let shared = Shared {
-        output_name: audio.output_name.clone(),
-        ..shared
-    };
     let mut server = if args.no_discovery {
         None
     } else {

@@ -11,14 +11,15 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     FromSample, SizedSample,
 };
-use rtrb::{Consumer, RingBuffer};
+use rtrb::{Consumer, Producer, RingBuffer};
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use symphonia::core::{
     audio::SampleBuffer,
@@ -30,6 +31,8 @@ use tokio::sync::{mpsc, oneshot};
 const QUEUE_FRAMES: usize = 192_000;
 
 pub struct AudioControls {
+    // Read by the UI and written by the worker, never touched by the callback.
+    pub output_name: Mutex<String>,
     pub enabled: AtomicBool,
     pub ready: AtomicBool,
     pub muted: AtomicBool,
@@ -60,6 +63,7 @@ pub struct Stats {
 impl AudioControls {
     pub fn new(volume: u8) -> Self {
         Self {
+            output_name: Mutex::new(String::new()),
             enabled: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             muted: AtomicBool::new(false),
@@ -412,11 +416,11 @@ fn build_stream<T: SizedSample + FromSample<f32>>(
 
 fn open_output(
     args: &Args,
+    device: &cpal::Device,
     consumer: Consumer<AudioFrame>,
     controls: Arc<AudioControls>,
     clock: Arc<ClockData>,
 ) -> Result<(cpal::Stream, String)> {
-    let device = select_output(args.output.as_deref())?;
     let name = device.name()?;
     let supported = device.default_output_config()?;
     let mut config = supported.config();
@@ -431,15 +435,9 @@ fn open_output(
         trim,
     );
     let stream = match supported.sample_format() {
-        cpal::SampleFormat::F32 => {
-            build_stream::<f32>(&device, &config, renderer, controls, clock)?
-        }
-        cpal::SampleFormat::I16 => {
-            build_stream::<i16>(&device, &config, renderer, controls, clock)?
-        }
-        cpal::SampleFormat::U16 => {
-            build_stream::<u16>(&device, &config, renderer, controls, clock)?
-        }
+        cpal::SampleFormat::F32 => build_stream::<f32>(device, &config, renderer, controls, clock)?,
+        cpal::SampleFormat::I16 => build_stream::<i16>(device, &config, renderer, controls, clock)?,
+        cpal::SampleFormat::U16 => build_stream::<u16>(device, &config, renderer, controls, clock)?,
         format => bail!("unsupported output format {format}; select another output device"),
     };
     stream.play()?;
@@ -450,6 +448,139 @@ fn open_output(
             config.sample_rate.0, config.buffer_size
         ),
     ))
+}
+
+fn same_device(a: &cpal::Device, b: &cpal::Device) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // Compare CoreAudio identities, including devices with identical names.
+        match (a.as_inner(), b.as_inner()) {
+            (
+                cpal::platform::DeviceInner::CoreAudio(a),
+                cpal::platform::DeviceInner::CoreAudio(b),
+            ) => a == b,
+            #[allow(unreachable_patterns)]
+            _ => false,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        a.name()
+            .ok()
+            .zip(b.name().ok())
+            .is_some_and(|(a, b)| a == b)
+    }
+}
+
+/// Owns native streams on the decoder thread. Retaining a bounded copy of PCM
+/// lets a replacement callback resume the existing timeline without waiting for
+/// several seconds of already decoded future audio to arrive again.
+struct Output {
+    stream: Option<cpal::Stream>,
+    device: Option<cpal::Device>,
+    producer: Option<Producer<AudioFrame>>,
+    history: VecDeque<AudioFrame>,
+    next_check: Instant,
+    error_count: u64,
+}
+impl Output {
+    fn new() -> Self {
+        Self {
+            stream: None,
+            device: None,
+            producer: None,
+            history: VecDeque::with_capacity(QUEUE_FRAMES),
+            next_check: Instant::now(),
+            error_count: 0,
+        }
+    }
+
+    fn refresh(
+        &mut self,
+        args: &Args,
+        controls: &Arc<AudioControls>,
+        clock: &Arc<ClockData>,
+    ) -> Result<()> {
+        if Instant::now() < self.next_check {
+            return Ok(());
+        }
+        self.next_check = Instant::now() + Duration::from_millis(200);
+        let errors = controls.device_errors.load(Ordering::Relaxed);
+        if args.output.is_some() && self.stream.is_some() && errors == self.error_count {
+            return Ok(());
+        }
+        let selected = select_output(args.output.as_deref());
+        if let Ok(device) = &selected {
+            if self.stream.is_some()
+                && errors == self.error_count
+                && self
+                    .device
+                    .as_ref()
+                    .is_some_and(|old| same_device(old, device))
+            {
+                return Ok(());
+            }
+        }
+
+        // Stop the old callback before changing queue accounting or opening the
+        // new device. No network session or source clock is reset on a switch.
+        self.stream.take();
+        self.device = None;
+        self.producer = None;
+        controls
+            .consumed
+            .store(controls.produced.load(Ordering::Relaxed), Ordering::Relaxed);
+        let result = (|| {
+            let device = selected?;
+            let (mut producer, consumer) = RingBuffer::new(QUEUE_FRAMES);
+            let epoch = controls.epoch.load(Ordering::Acquire);
+            let now = clock.now() as i128 + clock.offset.load(Ordering::Acquire) as i128
+                - (args.latency_ms * 1_000_000.0).round() as i128;
+            // Keep one sample before the new DAC deadline for interpolation.
+            self.history.retain(|frame| {
+                frame.epoch == epoch
+                    && frame.time_ns as i128 + 2_000_000_000 / frame.rate as i128 >= now
+            });
+            for frame in &self.history {
+                producer
+                    .push(*frame)
+                    .expect("history fits the output queue");
+            }
+            controls
+                .produced
+                .fetch_add(self.history.len() as u64, Ordering::Relaxed);
+            let (stream, name) =
+                open_output(args, &device, consumer, controls.clone(), clock.clone())?;
+            self.stream = Some(stream);
+            self.device = Some(device);
+            self.producer = Some(producer);
+            *controls.output_name.lock().unwrap() = name;
+            Ok(())
+        })();
+        // Do not swallow an error raised by the replacement stream during play().
+        self.error_count = errors;
+        if let Err(error) = &result {
+            controls
+                .consumed
+                .store(controls.produced.load(Ordering::Relaxed), Ordering::Relaxed);
+            *controls.output_name.lock().unwrap() = format!("Waiting for output: {error:#}");
+            self.next_check = Instant::now() + Duration::from_secs(1);
+        }
+        result
+    }
+
+    fn push(&mut self, frame: AudioFrame) -> bool {
+        if let Some(producer) = &mut self.producer {
+            if producer.push(frame).is_err() {
+                return false;
+            }
+        }
+        if self.history.len() == QUEUE_FRAMES {
+            self.history.pop_front();
+        }
+        self.history.push_back(frame);
+        true
+    }
 }
 
 struct AacDecoder {
@@ -497,7 +628,6 @@ impl AacDecoder {
 pub struct AudioWorker {
     pub sender: mpsc::Sender<EncodedAudio>,
     pub errors: mpsc::UnboundedReceiver<String>,
-    pub output_name: String,
     thread: Option<thread::JoinHandle<()>>,
     controls: Arc<AudioControls>,
 }
@@ -515,22 +645,29 @@ impl AudioWorker {
         let thread = thread::Builder::new()
             .name("wiim-aac-decoder".into())
             .spawn(move || {
-                let (mut producer, consumer) = RingBuffer::new(QUEUE_FRAMES);
-                let output = open_output(&args, consumer, control.clone(), clock);
-                let (_stream, name) = match output {
-                    Ok(output) => output,
-                    Err(e) => {
+                let mut output = Output::new();
+                if let Err(e) = output.refresh(&args, &control, &clock) {
+                    if args.output.is_some() {
                         let _ = ready_tx.send(Err(format!("{e:#}")));
                         return;
                     }
-                };
-                if ready_tx.send(Ok(name)).is_err() {
+                }
+                if ready_tx.send(Ok(())).is_err() {
                     return;
                 }
                 let mut decoder = AacDecoder::new();
                 let mut epoch = u64::MAX;
                 let mut timeline = SourceTimeline::default();
-                while let Some(message) = receiver.blocking_recv() {
+                while !control.shutdown.load(Ordering::Acquire) {
+                    let _ = output.refresh(&args, &control, &clock);
+                    let message = match receiver.try_recv() {
+                        Ok(message) => message,
+                        Err(mpsc::error::TryRecvError::Disconnected) => break,
+                        Err(mpsc::error::TryRecvError::Empty) => {
+                            thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                    };
                     let EncodedAudio::Data {
                         packet,
                         presentation,
@@ -569,10 +706,13 @@ impl AudioWorker {
                                     {
                                         break;
                                     }
-                                    if producer.push(frame).is_ok() {
-                                        control.produced.fetch_add(1, Ordering::Relaxed);
+                                    if output.push(frame) {
+                                        if output.producer.is_some() {
+                                            control.produced.fetch_add(1, Ordering::Relaxed);
+                                        }
                                         break;
                                     }
+                                    let _ = output.refresh(&args, &control, &clock);
                                     thread::sleep(Duration::from_millis(2));
                                 }
                             }
@@ -586,14 +726,13 @@ impl AudioWorker {
                 }
                 drop(errors_tx);
             })?;
-        let output_name = ready_rx
+        ready_rx
             .await
             .context("audio thread stopped during startup")?
             .map_err(anyhow::Error::msg)?;
         Ok(Self {
             sender,
             errors,
-            output_name,
             thread: Some(thread),
             controls,
         })

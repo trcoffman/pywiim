@@ -34,7 +34,11 @@ a follower's `master_ip` automatically. Select the existing WiiM group in
 Spotify, then start music. No Spotify credentials or additional Connect session
 are needed on the Mac.
 
-The default output is the Mac's system output selected at startup. To choose another:
+The receiver follows the Mac's system default output, including changes while it
+is running or paused. Switching outputs rebuilds the native stream and its clock
+calibration while keeping the buffered group's playback timeline. If an output
+temporarily disappears, the receiver stays joined and retries it.
+Use `--output` only to pin the receiver to a particular device instead:
 
 ```sh
 ./target/release/wiim-receiver SPEAKER_IP --name 'My Mac' --output 'MacBook Pro Speakers'
@@ -49,6 +53,13 @@ decoder errors. Keys:
 - `q` or Ctrl+C: log out and close the Mac's connections.
 
 The receiver never changes the system volume or removes other speakers.
+The Mac's individual volume slider in the WiiM app controls this same receiver
+gain, relative to the other speakers. Volume and mute commands received through
+the leader or the receiver's HTTP API change only the Mac's audio. Local key
+changes are reported back to the leader so its cached follower volume stays current.
+The leader's forwarded `pass` commands (`SlaveVolume`, `SlaveAdjVolume`, and
+`SlaveMute`, including group synchronization commands) are applied to local gain
+and mute, alongside direct volume/mute control messages.
 It retries a disconnected leader with bounded backoff. The default initial
 receiver gain is 30%; override with `--volume 20`.
 

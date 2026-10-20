@@ -72,12 +72,13 @@ pub struct Shared {
     pub audio: Arc<AudioControls>,
     pub clock: Arc<ClockData>,
     pub leader: watch::Sender<Option<Ipv4Addr>>,
+    device_revision: watch::Sender<u64>,
     pub stop: CancellationToken,
-    pub output_name: String,
 }
 impl Shared {
     pub fn new(name: String, uuid: String, volume: u8, master_host: Option<Ipv4Addr>) -> Self {
         let (leader, _) = watch::channel(master_host);
+        let (device_revision, _) = watch::channel(0);
         let audio = Arc::new(AudioControls::new(volume));
         Self {
             state: Arc::new(Mutex::new(State {
@@ -102,8 +103,8 @@ impl Shared {
             audio,
             clock: Arc::new(ClockData::new()),
             leader,
+            device_revision,
             stop: CancellationToken::new(),
-            output_name: String::new(),
         }
     }
     pub fn select_master(&self, host: Option<Ipv4Addr>) {
@@ -118,12 +119,25 @@ impl Shared {
         });
     }
     pub fn set_volume(&self, volume: u8) {
-        self.state.lock().unwrap().volume = volume;
-        self.audio.volume.store(volume.min(100), Ordering::Relaxed);
+        let volume = volume.min(100);
+        let mut state = self.state.lock().unwrap();
+        if state.volume == volume {
+            return;
+        }
+        state.volume = volume;
+        self.audio.volume.store(volume, Ordering::Relaxed);
+        self.device_revision
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
     pub fn set_mute(&self, muted: bool) {
-        self.state.lock().unwrap().muted = muted;
+        let mut state = self.state.lock().unwrap();
+        if state.muted == muted {
+            return;
+        }
+        state.muted = muted;
         self.audio.muted.store(muted, Ordering::Relaxed);
+        self.device_revision
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
     pub fn reset_audio(&self) {
         self.audio.epoch.fetch_add(1, Ordering::AcqRel);
@@ -235,12 +249,7 @@ async fn session(
     }
     let stream = connect(host, 25012).await?;
     let (reader, mut writer) = stream.into_split();
-    let login = {
-        let s = shared.state.lock().unwrap();
-        json!({"cmd":"login","name":s.name,"uuid":s.uuid,"wmrm_version":"4.3","type":"WiiMu-Mac",
-        "fw_version":"wiim-receiver.rust.0.1","has_new_version":0,"channel":s.channel,"volume":s.volume,"mute":u8::from(s.muted),
-        "battery_percent":0,"battery_charging":0,"mask":0,"BPS":0,"flags":175,"sub":0,"sub_master_uuid":""})
-    };
+    let login = device_info(shared, "login");
     send(&mut writer, login, "_linkplay_mrm", 253).await?;
     let result = tokio::select! {
         r=control_loop(reader,&mut writer,shared)=>r,
@@ -270,6 +279,13 @@ async fn session(
     result
 }
 
+fn device_info(shared: &Shared, command: &str) -> Value {
+    let s = shared.state.lock().unwrap();
+    json!({"cmd":command,"name":s.name,"uuid":s.uuid,"wmrm_version":"4.3","type":"WiiMu-Mac",
+        "fw_version":"wiim-receiver.rust.0.1","has_new_version":0,"channel":s.channel,"volume":s.volume,"mute":u8::from(s.muted),
+        "battery_percent":0,"battery_charging":0,"mask":0,"BPS":0,"flags":175,"sub":0,"sub_master_uuid":""})
+}
+
 async fn control_loop(
     mut reader: OwnedReadHalf,
     writer: &mut OwnedWriteHalf,
@@ -279,9 +295,15 @@ async fn control_loop(
     let mut buffer = [0; 65536];
     let mut metadata = String::new();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(3));
+    let mut device_revision = shared.device_revision.subscribe();
     let start = Instant::now();
     loop {
         tokio::select! {
+            _=device_revision.changed()=> {
+                // The leader caches follower volume for the WiiM app. Report
+                // local key/HTTP changes as well as controls forwarded by it.
+                send(writer,device_info(shared,"update"),"_linkplay_mrm",253).await?;
+            }
             count=reader.read(&mut buffer)=> {
                 let count=count?;ensure!(count!=0,"leader closed the group control connection");
                 for message in decoder.feed(&buffer[..count])? {handle_control(shared,message,&mut metadata)?;}
@@ -368,6 +390,7 @@ pub fn handle_control(shared: &Shared, message: Control, metadata: &mut String) 
             }
         }
         "control" => match v["operation"].as_str().unwrap_or("") {
+            "pass" => handle_speaker_command(shared, v["value"].as_str().unwrap_or(""))?,
             "volume" | "vol" => {
                 let volume = number(&v["value"])?;
                 ensure!((0..=100).contains(&volume), "invalid group volume");
@@ -398,6 +421,55 @@ pub fn handle_control(shared: &Shared, message: Control, metadata: &mut String) 
         state.playback_revision = state.playback_revision.wrapping_add(1);
     }
     shared.sync_output();
+    Ok(())
+}
+
+fn handle_speaker_command(shared: &Shared, command: &str) -> Result<()> {
+    // WMRMMaster::SendCommand forwards the WiiM app's follower controls inside
+    // a "pass" envelope, retaining their Slave* command strings. Only interpret
+    // the speaker settings we implement; never dispatch arbitrary commands.
+    if let Some(value) = command
+        .strip_prefix("SlaveVolume:")
+        .or_else(|| command.strip_prefix("SlaveSyncVolume:"))
+        .or_else(|| command.strip_prefix("setPlayerCmd:vol:"))
+    {
+        let volume: u8 = value.parse().context("invalid forwarded receiver volume")?;
+        ensure!(volume <= 100, "invalid forwarded receiver volume");
+        shared.set_volume(volume);
+    } else if let Some(value) = command.strip_prefix("SlaveAdjVolume") {
+        // Group sliders can send a signed delta rather than an absolute level.
+        ensure!(
+            value.starts_with(['+', '-']),
+            "invalid receiver volume adjustment"
+        );
+        let delta: i16 = match value {
+            "++" => 5,
+            "--" => -5,
+            _ => value
+                .parse()
+                .context("invalid receiver volume adjustment")?,
+        };
+        ensure!(
+            (-100..=100).contains(&delta),
+            "invalid receiver volume adjustment"
+        );
+        let volume = shared.state.lock().unwrap().volume;
+        shared.set_volume((i16::from(volume) + delta).clamp(0, 100) as u8);
+    } else if let Some(value) = command
+        .strip_prefix("SlaveMute:")
+        .or_else(|| command.strip_prefix("SlaveSyncMute:"))
+        .or_else(|| command.strip_prefix("setPlayerCmd:mute:"))
+    {
+        ensure!(
+            matches!(value, "0" | "1"),
+            "invalid forwarded receiver mute"
+        );
+        shared.set_mute(value == "1");
+    } else if let Some(value) = command.strip_prefix("SlaveChannel:") {
+        let channel: u8 = value.parse().context("invalid forwarded speaker channel")?;
+        ensure!(channel <= 2, "invalid forwarded speaker channel");
+        shared.state.lock().unwrap().channel = channel;
+    }
     Ok(())
 }
 
